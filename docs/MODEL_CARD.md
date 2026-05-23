@@ -5,31 +5,33 @@
 | Field | Value |
 | :--- | :--- |
 | Project | ECG AI Platform |
-| Model artifact | `artifacts/models/best_model.pt` |
-| Model type | `baseline_cnn` |
-| Input shape | 360-sample single-channel ECG beat/window |
-| Runtime | PyTorch for local training/evaluation/inference |
-| Dataset | MIT-BIH Arrhythmia Database loaded from local WFDB files |
-| Classes | `N`, `V`, `A`, `L`, `R` |
-| Current status | Functional academic ML baseline with weak held-out performance |
+| Release | `v0.2.0-real-mitbih-research` |
+| Primary artifact | `artifacts/models/best_model.pt` |
+| Research artifact | `artifacts/models/best_model_research.pt` |
+| Primary model | `baseline_cnn` |
+| Research model | `cnn_lstm` |
+| Runtime | PyTorch local training/evaluation/inference; small ONNX fallback for API container cold start |
+| Input | 360-sample single-channel ECG beat/window |
+| Dataset | MIT-BIH Arrhythmia Database from local WFDB files |
+| Status | Complete ML engineering research system with weak held-out model quality |
 
 ## Intended Use
 
-This model is intended for research, education, portfolio review, and ML systems engineering demonstration. It shows a complete ECG ML workflow: WFDB data loading, leakage-safe splitting, training, evaluation, threshold tuning, explainability, API serving, Streamlit demo, Docker packaging, and CI tests.
+This project is intended for research, education, portfolio review, and ML systems engineering demonstration. It demonstrates a full ECG ML workflow: WFDB ingestion, leakage-safe splitting, preprocessing, model training, evaluation, diagnostics, threshold tuning, explainability, API serving, Streamlit UI, Docker packaging, and CI tests.
 
-## Not Intended Use
+## Non-Intended Use
 
 This model is not intended for clinical diagnosis, treatment, monitoring, triage, patient care, or medical decision-making. It is not a medical device and has not been clinically validated.
 
-## Training Data
+## Dataset
 
-The project uses 48 complete local MIT-BIH WFDB records under:
+The project uses local MIT-BIH Arrhythmia Database WFDB records under:
 
 ```text
 datasets/mit-bih/
 ```
 
-Each record requires matching:
+Each usable record requires:
 
 ```text
 <record>.dat
@@ -37,90 +39,99 @@ Each record requires matching:
 <record>.atr
 ```
 
-The extra local annotation `102-0.atr` is skipped because matching `.dat` and `.hea` files are not present.
+The local run uses 48 complete records. An incomplete `102-0.atr` sidecar is skipped because matching `.dat` and `.hea` files are absent.
 
-## Class Mapping
+## Labels And Class Mapping
 
-```text
-N -> 0
-V -> 1
-A -> 2
-L -> 3
-R -> 4
-```
+| Label | Index | Project class |
+| :--- | ---: | :--- |
+| `N` | 0 | Normal / normal-like class mapping |
+| `V` | 1 | Premature ventricular contraction |
+| `A` | 2 | Atrial premature beat |
+| `L` | 3 | Left bundle branch block beat |
+| `R` | 4 | Right bundle branch block beat |
 
-Class order is stored in checkpoint metadata and validated before inference.
+Class order and mapping are stored in checkpoint metadata and validated before inference.
 
-## Evaluation
+## Preprocessing
 
-Current verified held-out MIT-BIH test metrics from `artifacts/models/best_model.pt` after threshold tuning:
+- Sampling rate: 360 Hz.
+- Window length: 360 samples.
+- Filtering: configured bandpass preprocessing in `configs/default.yaml`.
+- Default normalization: max-absolute scaling.
+- Training/evaluation windows are beat-centered around MIT-BIH annotations.
+- API file inference validates input length, NaN/Inf values, and checkpoint metadata before prediction.
 
-```text
-accuracy: 0.6284
-macro_f1: 0.2824
-weighted_f1: 0.6057
-roc_auc_ovr_macro: 0.6663
-```
+## Evaluation Split
 
-Per-class F1:
+- Split strategy: record-level grouping by `record_id`.
+- Goal: prevent beat/window leakage across train, validation, and test sets.
+- Leakage report: `reports/evaluation/leakage_check.json`.
+- Dataset validation: `reports/evaluation/dataset_validation.json`.
 
-```text
-N: 0.8975
-V: 0.4527
-A: 0.0014
-L: 0.0000
-R: 0.0606
-```
+## Baseline Metrics
 
-Threshold tuning improved validation macro F1 from `0.3025` to `0.4276`, but held-out test macro F1 remained weak. The anti-collapse check passed because all five classes are predicted and the largest prediction share is `63.10%`, but `L` recall is still zero and `A`/`R` false negatives remain high.
+Current verified held-out MIT-BIH test metrics for `artifacts/models/best_model.pt`:
 
-## Research Checkpoint
-
-The latest higher-budget research pass produced a `cnn_lstm` candidate using real MIT-BIH data, focal loss, class-balanced sampling, lower-strength augmentation, and threshold tuning. It is saved locally as:
-
-```text
-artifacts/models/best_model_research.pt
-```
-
-Research candidate metrics:
-
-```text
-accuracy: 0.5520
-macro_f1: 0.3295
-weighted_f1: 0.5890
-roc_auc_ovr_macro: 0.6171
-```
+| Metric | Value |
+| :--- | ---: |
+| Accuracy | 0.6284 |
+| Macro F1 | 0.2824 |
+| Weighted F1 | 0.6057 |
+| ROC-AUC OvR macro | 0.6663 |
 
 Per-class F1:
 
-```text
-N: 0.8390
-V: 0.7493
-A: 0.0153
-L: 0.0026
-R: 0.0414
-```
+| Class | F1 |
+| :--- | ---: |
+| N | 0.8975 |
+| V | 0.4527 |
+| A | 0.0014 |
+| L | 0.0000 |
+| R | 0.0606 |
 
-This checkpoint passes the narrow research promotion rule because macro F1 improves over `0.2824`, `A`/`L`/`R`/`V` F1 are non-zero, and the prediction distribution is not degenerate. It is not promoted to the main default model, and it is not clinically reliable. The minority morphology classes remain weak.
+## Research Candidate Metrics
+
+Best capped high-budget research candidate: `cnn_lstm_maxabs_focal_balanced`.
+
+| Metric | Value |
+| :--- | ---: |
+| Accuracy | 0.5520 |
+| Macro F1 | 0.3295 |
+| Weighted F1 | 0.5890 |
+| ROC-AUC OvR macro | 0.6171 |
+
+Per-class F1:
+
+| Class | F1 |
+| :--- | ---: |
+| N | 0.8390 |
+| V | 0.7493 |
+| A | 0.0153 |
+| L | 0.0026 |
+| R | 0.0414 |
+
+The research candidate passes a narrow research promotion rule because macro F1 improves over `0.2824`, `A`/`L`/`R`/`V` F1 are non-zero, and the prediction distribution is not degenerate. It is still weak and not clinically reliable.
 
 ## Limitations
 
-- Current model quality is weak and not clinically reliable.
-- Class imbalance and record-level generalization remain difficult.
-- `L`, `A`, and `R` performance need substantial improvement.
-- Architecture experiments show class-specific tradeoffs: `resnet1d` achieved higher macro F1 but still had zero `A` and `L` F1, while `cnn_lstm` produced the best non-collapsed research candidate with very weak `A`, `L`, and `R`.
-- The local training configuration uses a per-class cap for practical runtime; stronger training should run uncapped on better hardware.
-- Saliency maps are technical debugging aids, not medical explanations.
-- Docker does not include MIT-BIH files or `.pt` checkpoints; those must be provided externally.
+- Current model quality is not adequate for clinical use.
+- `A`, `L`, and `R` remain the main failure classes.
+- Capped local training is useful for reproducibility but not a final performance setting.
+- Record-level generalization remains unstable.
+- Saliency outputs are technical debugging artifacts, not medical reasoning.
+- Docker does not include MIT-BIH files or PyTorch `.pt` checkpoints.
+- No external validation cohort has been evaluated.
 
-## Ethical And Medical Disclaimer
+## Ethical And Clinical Warning
 
-This project is for research and education only. It must not be used to diagnose, treat, monitor, or make decisions about any person. Any future clinical use would require expert clinical review, stronger validation, regulatory analysis, privacy/security work, and controlled deployment processes.
+This project must not be used to diagnose, treat, monitor, or make decisions about any person. Any future clinical use would require expert clinical review, stronger validation, regulatory analysis, privacy/security review, calibrated deployment controls, and prospective evaluation.
 
-## Recommended Next Work
+## Future Validation Needed
 
-- Train `resnet1d` and `cnn_lstm` uncapped on stronger hardware with repeated grouped-record splits.
-- Run grouped fold validation to estimate record-level generalization stability.
-- Investigate `L`, `A`, and `R` false negatives with waveform-level review.
-- Add calibrated probabilities and threshold review by class.
-- Export a verified ONNX artifact from the best PyTorch checkpoint for lightweight API deployment.
+- Repeated grouped-record validation and external dataset validation.
+- Beat segmentation and R-peak alignment audit.
+- Uncapped training on stronger hardware.
+- Minority-class methods for `A`, `L`, and `R`.
+- Per-class threshold calibration with confidence review.
+- Independent review by ECG/domain experts.

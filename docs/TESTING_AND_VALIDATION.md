@@ -1,93 +1,164 @@
 # Testing And Validation
 
-## Verified Commands
+This document summarizes the v0.2.0 test strategy. Commands that depend on local MIT-BIH data or local `.pt` checkpoints require ignored files that are not committed to Git.
 
-These commands were run locally against the real MIT-BIH path unless noted otherwise:
+## Unit Tests
+
+Run:
 
 ```bash
-python -m pip install -r requirements.txt
 python -m pytest -q
-python -m scripts.prepare_mitbih --config configs/default.yaml
-python -m scripts.validate_dataset --config configs/default.yaml
-python -m scripts.leakage_check --config configs/default.yaml
-python -m scripts.smoke_test_pipeline --config configs/default.yaml
-python -m scripts.train_model --config configs/default.yaml
-python -m scripts.evaluate_model --config configs/default.yaml --checkpoint artifacts/models/best_model.pt
-python -m scripts.tune_thresholds --config configs/default.yaml --checkpoint artifacts/models/best_model.pt
-python -m scripts.diagnose_model_quality --config configs/default.yaml --checkpoint artifacts/models/best_model.pt
-python -m scripts.compare_models --config configs/default.yaml
-python -m scripts.cross_validate --config configs/default.yaml
-python -m scripts.error_analysis --config configs/default.yaml
-python -m scripts.robustness_test --config configs/default.yaml
-python -m scripts.explain_prediction --input artifacts/samples/demo_ecg.csv --config configs/default.yaml
-python -m scripts.benchmark_model --config configs/default.yaml --checkpoint artifacts/models/best_model.pt --iterations 50
-docker build -t ecg-ai-system .
 ```
 
-Additional runtime checks:
+Coverage areas:
+
+- Config loading and validation.
+- Signal validation and preprocessing.
+- Dataset loading utilities and small leakage-safe split checks.
+- Model forward pass for registered architectures.
+- Checkpoint metadata validation.
+- Inference output schema and threshold behavior.
+- API health and core route behavior.
+- Edge cases for malformed, short, NaN/Inf, and corrupted inputs.
+
+## Smoke Tests
+
+```bash
+python -m scripts.smoke_test_pipeline --config configs/default.yaml
+```
+
+CI runs smoke tests with explicit synthetic/no-checkpoint environment flags. Local real MIT-BIH smoke paths should use the real dataset and local checkpoints.
+
+## Dataset Validation
+
+```bash
+python -m scripts.prepare_mitbih --config configs/default.yaml
+python -m scripts.validate_dataset --config configs/default.yaml
+```
+
+Expected reports:
+
+- `reports/evaluation/mitbih_preparation.json`
+- `reports/evaluation/dataset_validation.json`
+- `artifacts/evaluation/dataset_summary.json`
+
+Known local behavior: incomplete sidecar `102-0.atr` is skipped because matching `.dat` and `.hea` files are missing.
+
+## Leakage Checks
+
+```bash
+python -m scripts.leakage_check --config configs/default.yaml
+```
+
+The project uses record-level grouping by `record_id`, so train/validation/test splits should not share the same MIT-BIH record.
+
+Expected report:
+
+```text
+reports/evaluation/leakage_check.json
+```
+
+## Evaluation Validation
+
+```bash
+python -m scripts.evaluate_model --config configs/default.yaml --checkpoint artifacts/models/best_model.pt
+```
+
+Expected outputs:
+
+- `reports/evaluation/metrics_summary.json`
+- `reports/evaluation/classification_report.json`
+- `reports/evaluation/confusion_matrix.csv`
+- `reports/evaluation/confusion_matrix.png`
+- `reports/evaluation/prediction_distribution.json`
+- `reports/evaluation/false_negative_summary.json`
+
+The current baseline model is not collapsed to one class, but `A`, `L`, and `R` performance is weak.
+
+## Robustness Tests
+
+```bash
+python -m scripts.robustness_test --config configs/default.yaml
+```
+
+Covered cases include:
+
+- Gaussian noise.
+- Baseline wander.
+- Amplitude scaling.
+- Short signal rejection.
+- NaN/Inf signal rejection.
+- Corrupted CSV handling.
+- Wrong sampling-rate metadata.
+- Missing annotation behavior.
+
+Expected report:
+
+```text
+reports/robustness/robustness_summary.json
+```
+
+## API Health Checks
+
+Run:
 
 ```bash
 uvicorn src.api.app:app --host 127.0.0.1 --port 8010
+```
+
+Verify:
+
+```text
+GET http://127.0.0.1:8010/health
+GET http://127.0.0.1:8010/model-info
+POST http://127.0.0.1:8010/predict
+POST http://127.0.0.1:8010/predict-file
+```
+
+The API must not silently fall back to an incompatible model. Checkpoint metadata mismatches should fail clearly unless an explicit demo fallback is enabled.
+
+## Streamlit Verification
+
+Run:
+
+```bash
 python -m streamlit run streamlit_app.py --server.headless true --server.port 8502
+```
+
+Verify:
+
+- Page loads.
+- Medical/research disclaimer is visible.
+- CSV upload path is available.
+- Prediction probabilities and confidence render.
+- Backend URL environment override works through `ECG_API_URL`.
+
+## Docker Verification
+
+Build:
+
+```bash
+docker build -t ecg-ai-system .
+```
+
+Run:
+
+```bash
 docker run -p 8001:8000 ecg-ai-system
 ```
 
-The API `/health` endpoint returned `status: "ok"`, Streamlit returned HTTP 200, and the Docker container returned a healthy API response after startup.
-
-## Test Coverage Areas
-
-- Config loading and validation
-- Signal preprocessing and segmentation
-- MIT-BIH inventory loading and leakage report
-- NaN/Inf, short signal, sampling-rate, and corrupted-file edge cases
-- Model forward pass for `baseline_cnn`, `resnet1d`, `inceptiontime`, and `cnn_lstm`
-- Checkpoint metadata mismatch detection
-- Inference output schema and threshold use
-- API health, model-info, and prediction routes
-- Robustness acceptance/rejection paths
-
-## Generated Artifacts
-
-| Artifact | Purpose |
-| :--- | :--- |
-| `reports/evaluation/mitbih_preparation.json` | WFDB inventory and complete-record validation. |
-| `reports/evaluation/dataset_validation.json` | Dataset source, class distribution, record count, and warnings. |
-| `reports/evaluation/leakage_check.json` | Record-level leakage report. |
-| `artifacts/evaluation/dataset_summary.json` | Dataset summary for GitHub/project review. |
-| `artifacts/evaluation/splits.json` | Record-level split metadata. |
-| `artifacts/metrics/training_history.csv` | Per-epoch training and validation metrics. |
-| `artifacts/metrics/training_curves.png` | Loss and macro-F1 training curves. |
-| `reports/evaluation/mitbih_evaluation_summary.json` | Current evaluation metrics and checkpoint metadata. |
-| `reports/evaluation/classification_report.json` | Per-class precision, recall, F1, sensitivity, and specificity. |
-| `reports/evaluation/confusion_matrix.csv` | Confusion matrix values. |
-| `reports/evaluation/confusion_matrix.png` | Confusion matrix visualization. |
-| `reports/evaluation/prediction_distribution.json` | Anti-collapse prediction distribution. |
-| `reports/evaluation/false_negative_summary.json` | False-negative counts and rates by class. |
-| `reports/error_analysis/summary.json` | Misclassification, confidence, and worst-class analysis. |
-| `artifacts/evaluation/error_analysis.md` | Concise error-analysis summary. |
-| `reports/robustness/robustness_summary.json` | Robustness cases and rejection behavior. |
-| `reports/explainability/explanation_summary.json` | Explanation method, image, probabilities, and disclaimer. |
-| `artifacts/metrics/benchmark_summary.json` | Inference latency benchmark summary. |
-| `reports/benchmarks/latency_breakdown.json` | Report copy of the latency breakdown. |
-
-## Current Validation Result
+Verify:
 
 ```text
-source: mitbih
-real_mitbih: true
-record_count: 48
-sample_count: 100012
-leakage_check: passed
-accuracy: 0.6284
-macro_f1: 0.2824
-weighted_f1: 0.6057
-roc_auc_ovr_macro: 0.6663
+GET http://127.0.0.1:8001/health
 ```
 
-The model is not collapsed to one class, but it is not yet a high-quality ECG classifier. `L` recall is zero, and `A`/`R` false-negative rates are high. These metrics are reported honestly and are not clinical-performance claims.
+The image intentionally excludes MIT-BIH files and `.pt` checkpoints. It is API-ready with the bundled small ONNX fallback for cold-start demonstration.
 
-## Known Failed/Transient Checks
+## Known Failure Modes
 
-- A prior full uncapped training attempt exceeded the local 20-minute command timeout before producing a checkpoint. The current config uses a per-class cap for local reproducibility.
-- The first Docker health probe at 8 seconds was too early and closed the connection. The same container passed `/health` after a longer startup wait, and the Dockerfile now has a startup healthcheck window.
-- Direct `streamlit` executable launch did not stay up in this shell. `python -m streamlit run ...` passed with HTTP 200.
+- Missing MIT-BIH files: real training/evaluation commands fail with a clear dataset error unless synthetic fallback is explicitly enabled.
+- Missing `.pt` checkpoint: PyTorch inference fails clearly unless fallback is explicitly enabled.
+- Checkpoint/config mismatch: metadata guard rejects mismatched model type, class order, input size, or preprocessing.
+- Weak model quality: `A`, `L`, and `R` remain unreliable despite the completed system.
+- Local CPU/GPU constraints: uncapped training and cross-validation can be slow.

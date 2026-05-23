@@ -78,6 +78,8 @@ datasets/mitbih/
 artifacts/**/*.npy
 artifacts/**/*.pkl
 artifacts/models/*.pt
+artifacts/models/candidates/
+artifacts/models/**/*.pt
 !artifacts/**/*.json
 !artifacts/**/*.csv
 !reports/**/*.json

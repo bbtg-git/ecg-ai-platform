@@ -1,128 +1,141 @@
-# ECG AI Platform Project Report
+# Project Report
 
-## Scope
+## Problem Statement
 
-ECG AI Platform is a portfolio and research demonstration for real-time ECG arrhythmia telemetry. It is production-style software, but it is not a clinical diagnostic device and has not been validated for patient care.
+This project builds a real ECG arrhythmia classification research system around the MIT-BIH Arrhythmia Database. The goal is not to claim clinical reliability. The goal is to demonstrate a complete, reproducible ML engineering platform for ECG signal ingestion, model training, evaluation, diagnostics, inference serving, and release-quality documentation.
 
-Out of scope: HIPAA/GDPR compliance, medical-device regulatory validation, production hospital deployment, production load testing, full retraining infrastructure, and clinical diagnosis claims.
+## Dataset
 
-## System Summary
+The system uses local MIT-BIH WFDB records stored under:
 
-The platform combines:
-
-- FastAPI REST and WebSocket APIs.
-- ONNX Runtime model inference for 360-sample ECG beat windows.
-- Optional PyTorch checkpoint loading for Grad-CAM explainability.
-- Synthetic and MIT-BIH replay stream sources.
-- Prometheus metrics and dashboard summary metrics.
-- Next.js dashboard with live waveform rendering, schema-validated stream payloads, reconnect/error states, Grad-CAM modal handling, and PDF report generation.
-- Docker Compose, Render, Vercel, and GitHub Actions configuration.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    A["ECG source"] --> B["FastAPI stream router"]
-    B --> C["Model manager"]
-    C --> D["ONNX Runtime"]
-    D --> E["Prediction payload"]
-    E --> F["Next.js dashboard"]
-    B --> G["Prometheus metrics"]
-    F --> H["Report API"]
+```text
+datasets/mit-bih/
 ```
 
-## Model Artifact
+Each complete record requires `.dat`, `.hea`, and `.atr` files. The current local run detects 48 complete usable records. Dataset files are ignored by Git and must be provided locally by the user.
 
-The current deployable artifact is:
+## System Architecture
 
-| Field | Value |
-| :--- | :--- |
-| Path | `backend/models/ecg_cnn.onnx` |
-| SHA-256 | `4d796c63201114a5bfeb128fb32d78da0c13b6b92385682cddf4d7b6260c8c25` |
-| Runtime | ONNX Runtime CPU |
-| Input shape | `[1, 360]` |
-| Classes | `N`, `V`, `A`, `L`, `R` |
+The system is organized as a modular Python ML stack:
 
-The artifact manifest is stored at `backend/models/model_manifest.json`. `MODEL_SHA256` can be set in deployment to fail startup loading if the artifact hash does not match.
+- `src/config`: YAML config loading and validation.
+- `src/data`: MIT-BIH loading, inventory validation, and split metadata.
+- `src/preprocessing`: signal validation, filtering, windowing, and normalization.
+- `src/models`: neural model registry.
+- `src/training`: reproducible training loop and checkpoint metadata.
+- `src/evaluation`: metrics, threshold tuning, leakage checks, robustness, and error analysis.
+- `src/inference`: safe checkpoint loading and prediction pipeline.
+- `src/api`: FastAPI serving layer.
+- `src/monitoring`: inference logs.
+- `scripts`: runnable CLI workflows.
 
-## API Contract
+## Pipeline
 
-Primary public endpoints:
+```text
+WFDB records
+  -> inventory validation
+  -> signal loading
+  -> annotation-centered beat/window extraction
+  -> preprocessing and normalization
+  -> record-level split
+  -> training
+  -> evaluation and threshold tuning
+  -> inference/API/UI
+  -> monitoring and reports
+```
 
-| Method | Endpoint | Status |
-| :--- | :--- | :--- |
-| `GET` | `/health` | Implemented |
-| `GET` | `/metrics` | Implemented, auth-gated when `METRICS_AUTH_TOKEN` is set |
-| `GET` | `/metrics/dashboard` | Implemented, auth-gated when `METRICS_AUTH_TOKEN` is set |
-| `POST` | `/analyze` | Implemented with fixed 360-sample validation |
-| `POST` | `/explain` | Implemented, returns 503 when Grad-CAM is unavailable |
-| `POST` | `/report/generate` | Implemented with payload size limits and optional Bearer auth |
-| `GET` | `/report/session/{id}/json` | Implemented with optional Bearer auth |
-| `WS` | `/ws/ecg-stream` | Implemented with origin and query validation |
+## Training Methodology
 
-The frontend mirrors stream and explainability payloads with `zod` schemas in `frontend/lib/schemas.ts`.
+Training is config-driven through `configs/default.yaml`. The current release supports:
 
-## Security And Resilience
+- Deterministic seed control.
+- Model selection through the registry.
+- Class weighting.
+- Weighted sampling.
+- ECG-specific augmentations.
+- Gradient clipping.
+- Scheduler support.
+- Macro-F1 monitoring.
+- Checkpoint metadata with class order, preprocessing settings, model type, sampling rate, timestamp, and git commit when available.
 
-Implemented safeguards:
+The default baseline is `baseline_cnn`. Research experiments also evaluate `resnet1d`, `inceptiontime`, and `cnn_lstm`.
 
-- CORS origin allowlist from `ALLOWED_ORIGINS`.
-- WebSocket origin validation against the same allowlist.
-- Query allowlists for stream mode, synthetic pattern, and MIT-BIH record IDs.
-- Fixed input length and finite-number validation for `/analyze` and `/explain`.
-- Metrics Basic Auth when `METRICS_AUTH_TOKEN` is configured.
-- Report Bearer Auth when `REPORT_AUTH_TOKEN` is configured.
-- Maximum anomaly-event and image-byte limits for report generation.
-- Graceful backend `model_unavailable` health state when the model cannot load.
-- Frontend reconnect, malformed payload, backend offline, and explainability unavailable states.
+## Evaluation Methodology
 
-## Verification
+Evaluation reports include:
 
-Verified in this workspace:
+- Accuracy.
+- Macro F1.
+- Weighted F1.
+- ROC-AUC OvR macro.
+- Per-class precision, recall, sensitivity, specificity, and F1.
+- Confusion matrix.
+- Prediction distribution and anti-collapse checks.
+- False-negative summary.
+- Low-confidence predictions.
+- ROC and precision-recall plots.
 
-| Area | Command | Result |
-| :--- | :--- | :--- |
-| Frontend install | `npm ci` | Passed |
-| Frontend lint | `npm run lint` | Passed |
-| Frontend typecheck | `npm run typecheck` | Passed |
-| Frontend tests | `npm test -- --runInBand` | Passed, 26 tests |
-| Frontend build | `npm run build` | Passed |
-| Frontend audit | `npm audit --audit-level=moderate` | Passed |
-| Backend tests | `docker run ... pytest --cov=. --cov-fail-under=80` | Passed, 39 tests, 80.05% coverage |
-| Backend syntax | `py -m compileall backend` | Passed |
-| Compose config | `docker compose config` | Passed |
+Reports are written under `reports/evaluation/` and `reports/experiments/`.
 
-The full backend image rebuild timed out locally while resolving heavy ML dependencies, but the existing Python 3.10 backend image successfully ran the current backend source via bind mount.
+## Leakage Prevention
 
-## Performance Claims
+The split strategy groups by `record_id`. This prevents beat/window leakage where beats from the same MIT-BIH record appear in multiple splits. Leakage reports are generated with:
 
-No static MIT-BIH accuracy, F1, or latency numbers are claimed in this report. Those numbers must be generated from:
+```bash
+python -m scripts.leakage_check --config configs/default.yaml
+```
 
-- `backend/scripts/evaluate_mitbih.py`
-- `backend/scripts/benchmark_inference.py`
-- `backend/scripts/system_benchmark.py`
-- `backend/scripts/run_ablation.py`
+## Experiments
 
-Acceptance targets are documented in `docs/benchmarks.md`.
+The v0.2.0 research pass ran capped high-budget experiments:
 
-## Deployment Readiness
+```bash
+python -m scripts.run_high_budget_experiments --config configs/default.yaml --epochs 5 --cap 2500
+```
 
-The repository is configured for:
+The experiment runner stores candidate checkpoints under ignored `artifacts/models/candidates/`, evaluates each candidate, and only copies a candidate to `artifacts/models/best_model_research.pt` if it passes the promotion rule.
 
-- Local Docker Compose development.
-- Render backend deployment through `render.yaml`.
-- Vercel frontend deployment through `frontend/vercel.json`.
-- GitHub Actions CI for backend tests, frontend lint/typecheck/tests/build.
+Promotion required:
 
-Production deployment must set real secrets for `METRICS_AUTH_TOKEN` and `REPORT_AUTH_TOKEN`, production `ALLOWED_ORIGINS`, and browser-facing `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_WS_URL`.
+- Macro F1 above the baseline value `0.2824`.
+- Non-zero `A`, `L`, `R`, and `V` F1.
+- Non-degenerate prediction distribution.
+- At least four predicted classes.
 
-## Remaining Work
+## Results
 
-- Generate and publish MIT-BIH split, leakage-check, accuracy, F1, latency, and throughput artifacts.
-- Add a Playwright smoke test that verifies dashboard load, WebSocket connection, `/analyze`, and PDF generation.
-- Replace in-memory report session storage with durable storage if report retrieval must survive process restart.
-- Decide whether public report generation should remain unauthenticated for demos or move behind a real user-auth flow.
+Baseline:
 
-## Disclaimer
+| Model | Accuracy | Macro F1 | Weighted F1 | N F1 | V F1 | A F1 | L F1 | R F1 |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `baseline_cnn` | 0.6284 | 0.2824 | 0.6057 | 0.8975 | 0.4527 | 0.0014 | 0.0000 | 0.0606 |
 
-This project is educational software. It is not intended for clinical diagnosis, treatment, triage, or patient monitoring.
+Best research candidate:
+
+| Model | Accuracy | Macro F1 | Weighted F1 | N F1 | V F1 | A F1 | L F1 | R F1 |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `cnn_lstm_maxabs_focal_balanced` | 0.5520 | 0.3295 | 0.5890 | 0.8390 | 0.7493 | 0.0153 | 0.0026 | 0.0414 |
+
+The research candidate improves macro F1 but remains weak on minority morphology classes.
+
+## Limitations
+
+- The model is not clinically reliable.
+- `A`, `L`, and `R` remain poor.
+- Capped training is a local reproducibility compromise.
+- The record-level split is more realistic than random beat-level splits, but it exposes substantial generalization difficulty.
+- No external dataset validation is included.
+- No live hosted demo URL is claimed.
+
+## Future Work
+
+- Beat segmentation validation and R-peak alignment review.
+- Uncapped training and repeated grouped-fold validation.
+- Per-class threshold tuning and calibration.
+- Minority-class training methods that preserve waveform morphology.
+- Model registry, artifact versioning, and experiment tracking.
+- Hosted API and dashboard only after verified deployment.
+
+## Medical Disclaimer
+
+This project is for research and education only. It is not for diagnosis, treatment, monitoring, triage, patient care, or medical decision-making.

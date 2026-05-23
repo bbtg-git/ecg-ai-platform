@@ -11,4 +11,9 @@ htmlcov/
 .env
 .env.*
 artifacts/models/*.pt
+artifacts/models/**/*.pt
+artifacts/models/candidates/
+artifacts/**/*.npy
+artifacts/**/*.pkl
+datasets/
 datasets/mit-bih/
