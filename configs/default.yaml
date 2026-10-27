@@ -46,7 +46,7 @@ model:
   runtime: pytorch
   checkpoint: artifacts/models/best_model.pt
   fallback_checkpoint: backend/models/ecg_cnn.onnx
-  allow_fallback_checkpoint: false
+  allow_fallback_checkpoint: true
   allow_missing_checkpoint: false
   onnx_provider: CPUExecutionProvider
   confidence_threshold: 0.6
